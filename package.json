@@ -1,0 +1,15 @@
+{
+  "name": "deadzonev2",
+  "version": "1.0.0",
+  "description": "Multiplayer FPS game inspired by Deadshot.io",
+  "scripts": {
+    "install-all": "npm install && cd client && npm install && cd ../server && npm install",
+    "start": "concurrently \"npm run start --prefix server\" \"npm run start --prefix client\"",
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run start --prefix client\"",
+    "client": "npm start --prefix client",
+    "server": "npm start --prefix server"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}
