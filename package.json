@@ -8,7 +8,7 @@
     "dev": "concurrently \"npm run dev --prefix server\" \"npm run start --prefix client\"",
     "client": "npm start --prefix client",
     "server": "npm start --prefix server",
-    "build": "mkdir -p dist && cp -r client/public/* dist/"
+    "build": "mkdir -p dist && cp -r client/public/* dist/ && echo 'Built at $(date)' > dist/built.txt"
   },
   "devDependencies": {
     "concurrently": "^8.2.0"
