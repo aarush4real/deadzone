@@ -198,96 +198,119 @@ function initEventListeners() {
 }
 
 // Initialize socket connection
-function initSocket() {
-    // Determine socket URL: allow override via window.SOCKET_URL (set via server/env or config) or meta tag
-    let socketUrl = undefined;
-    if (window.SOCKET_URL && window.SOCKET_URL.trim()) {
-        socketUrl = window.SOCKET_URL.trim();
-    } else {
-        const meta = document.querySelector('meta[name="socket-url"]');
-        if (meta && meta.content) {
-            socketUrl = meta.content;
+    function initSocket() {
+        // Offline mode flag
+        gameState.isOffline = false;
+
+        // Determine socket URL: allow override via window.SOCKET_URL (set via server/env or config) or meta tag
+        let socketUrl = undefined;
+        if (window.SOCKET_URL && window.SOCKET_URL.trim()) {
+            socketUrl = window.SOCKET_URL.trim();
+        } else {
+            const meta = document.querySelector('meta[name="socket-url"]');
+            if (meta && meta.content) {
+                socketUrl = meta.content;
+            }
         }
-    }
-    const opts = { transports: ['websocket'] };
-    gameState.socket = socketUrl ? io(socketUrl, opts) : io(opts);
+        const opts = { transports: ['websocket'] };
+        gameState.socket = socketUrl ? io(socketUrl, opts) : io(opts);
 
-    gameState.socket.on('connect', () => {
-        console.log('Connected to server');
-        gameState.player.id = gameState.socket.id;
-        // Request to join the game
-        gameState.socket.emit('join-game');
-    });
+        // Timer to handle connection timeout (go offline after 5 seconds)
+        const connectionTimeout = setTimeout(() => {
+            console.warn('Socket connection timed out, switching to offline mode');
+            hideLoadingScreen();
+            gameState.isOffline = true;
+        }, 5000);
 
-    gameState.socket.on('disconnect', () => {
-        console.log('Disconnected from server');
-    });
-
-    // Receive initial game state
-    gameState.socket.on('init', (data) => {
-        // Set up initial state from server
-        gameState.player.position.copy(data.player.position);
-        gameState.player.rotation.copy(data.player.rotation);
-
-        // Create other players
-        data.otherPlayers.forEach((playerData) => {
-            addOtherPlayer(playerData);
+        gameState.socket.on('connect', () => {
+            console.log('Connected to server');
+            gameState.player.id = gameState.socket.id;
+            // Request to join the game
+            gameState.socket.emit('join-game');
         });
 
-        // Hide loading screen
-        document.getElementById('loading-screen').style.display = 'none';
-        document.getElementById('game-container').style.display = 'block';
-        // Request pointer lock to start
-        gameState.renderer.domElement.requestPointerLock();
-    });
+        gameState.socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            // If we were connected and now disconnected, we could go offline, but for simplicity we'll stay online until refresh
+        });
 
-    // Receive updates from server
-    gameState.socket.on('update', (data) => {
-        // Update other players
-        data.players.forEach((playerData) => {
-            if (playerData.id === gameState.player.id) {
-                // This is us - update our state if server has authority
-                // For now, we'll use client-side prediction and server reconciliation
-                // In a full implementation, we'd reconcile differences
-            } else {
-                updateOtherPlayer(playerData);
+        // Receive initial game state
+        gameState.socket.on('init', (data) => {
+            clearTimeout(connectionTimeout);
+            // Set up initial state from server
+            gameState.player.position.copy(data.player.position);
+            gameState.player.rotation.copy(data.player.rotation);
+
+            // Create other players
+            data.otherPlayers.forEach((playerData) => {
+                addOtherPlayer(playerData);
+            });
+
+            // Hide loading screen and show game
+            hideLoadingScreen();
+        });
+
+        // Receive updates from server
+        gameState.socket.on('update', (data) => {
+            // If we are offline, ignore updates
+            if (gameState.isOffline) return;
+
+            // Update other players
+            data.players.forEach((playerData) => {
+                if (playerData.id === gameState.player.id) {
+                    // This is us - update our state if server has authority
+                    // For now, we'll use client-side prediction and server reconciliation
+                    // In a full implementation, we'd reconcile differences
+                } else {
+                    updateOtherPlayer(playerData);
+                }
+            });
+
+            // Update bullets
+            gameState.bullets = data.bullets || [];
+            updateBullets();
+
+            // Update chat, kill feed, etc. would go here
+        });
+
+        // Hit registration
+        gameState.socket.on('hit', (data) => {
+            if (gameState.isOffline) return;
+            if (data.targetId === gameState.player.id) {
+                // We were hit
+                gameState.player.health = data.health;
+                updateHUD();
+                // Add hit effect (screen flash, etc.)
             }
         });
 
-        // Update bullets
-        gameState.bullets = data.bullets || [];
-        updateBullets();
+        // Kill feed updates
+        gameState.socket.on('kill', (data) => {
+            if (gameState.isOffline) return;
+            addToKillFeed(data.killer, data.victim, data.weapon);
+        });
 
-        // Update chat, kill feed, etc. would go here
-    });
+        // Respawn
+        gameState.socket.on('respawn', (data) => {
+            if (gameState.isOffline) return;
+            if (data.playerId === gameState.player.id) {
+                gameState.player.position.copy(data.position);
+                gameState.player.rotation.copy(data.rotation);
+                gameState.player.velocity.set(0, 0, 0);
+                gameState.player.health = 100;
+                gameState.player.ammo = 30;
+                updateHUD();
+            }
+        });
+    }
 
-    // Hit registration
-    gameState.socket.on('hit', (data) => {
-        if (data.targetId === gameState.player.id) {
-            // We were hit
-            gameState.player.health = data.health;
-            updateHUD();
-            // Add hit effect (screen flash, etc.)
-        }
-    });
-
-    // Kill feed updates
-    gameState.socket.on('kill', (data) => {
-        addToKillFeed(data.killer, data.victim, data.weapon);
-    });
-
-    // Respawn
-    gameState.socket.on('respawn', (data) => {
-        if (data.playerId === gameState.player.id) {
-            gameState.player.position.copy(data.position);
-            gameState.player.rotation.copy(data.rotation);
-            gameState.player.velocity.set(0, 0, 0);
-            gameState.player.health = 100;
-            gameState.player.ammo = 30;
-            updateHUD();
-        }
-    });
-}
+    // Helper function to hide loading screen and show game screen
+    function hideLoadingScreen() {
+        document.getElementById('loading-screen').style.display = 'none';
+        document.getElementById('game-container').style.display = 'block';
+        // Note: We do not request pointer lock here; we wait for user to click on canvas
+        // The pointerlockchange event will handle showing/hiding based on lock state
+    }
 
 // Add another player to the scene
 function addOtherPlayer(playerData) {
@@ -471,8 +494,10 @@ function shoot() {
         shooterId: gameState.player.id
     };
 
-    // Send to server for authoritative handling
-    gameState.socket.emit('shoot', bullet);
+    // Send to server for authoritative handling (if connected)
+    if (gameState.socket) {
+        gameState.socket.emit('shoot', bullet);
+    }
 
     // Also add locally for immediate feedback (client-side prediction)
     gameState.bullets.push(bullet);
